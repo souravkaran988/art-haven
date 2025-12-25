@@ -1,6 +1,26 @@
-venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
 instance/
+.pytest_cache/
+__init__.py
+
+# Database
+*.sqlite3
+*.db
+*.db-journal
+
+# Node / Frontend
+node_modules/
+build/
 .DS_Store
-database.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Uploads (Optional: keep this if you want to upload test images to git, remove if not)
+# uploads/

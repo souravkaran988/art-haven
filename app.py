@@ -1,31 +1,34 @@
-from flask import Flask, request, jsonify, send_from_directory, render_template
+import os
+from flask import Flask, send_from_directory, render_template, request, jsonify
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-import os
-import random
-from datetime import datetime
 
-# Setup paths
+# --- CONFIGURATION ---
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'database.db')
 
-app = Flask(__name__, static_folder='build/static', template_folder='build')
+# CHANGE 1: Point to the 'build' folder (where our script moved the frontend)
+app = Flask(__name__, static_folder='build', static_url_path='/', template_folder='build')
 CORS(app)
 
-# --- CRITICAL FIX: Use Absolute Path for Database ---
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + DB_PATH
+# Database & Uploads
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(BASE_DIR, 'database.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = os.path.join('static', 'uploads')
+# CHANGE 2: Keep uploads in a separate folder (not inside build)
+app.config['UPLOAD_FOLDER'] = os.path.join(BASE_DIR, 'uploads') 
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
 
 db = SQLAlchemy(app)
 
+# Create upload folder if it doesn't exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
-# --- Models ---
+# --- MODELS ---
+# (Keep your existing models exactly as they were)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -52,109 +55,61 @@ class Like(db.Model):
 class Comment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     text = db.Column(db.String(500), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     image_id = db.Column(db.Integer, db.ForeignKey('image.id'), nullable=False)
 
-# --- Routes ---
+# --- API ROUTES ---
 
-# 0. DEBUG ROUTE (To check if server is alive)
-@app.route('/ping')
-def ping():
-    return jsonify({"message": "Pong!", "status": "Server is running"})
-
-# 1. ROOT ROUTE
-@app.route('/')
-def serve():
-    return render_template('index.html')
-
-# 2. API ROUTES
 @app.route('/signup', methods=['POST'])
 def signup():
+    data = request.json
+    hashed_password = generate_password_hash(data['password'], method='scrypt')
+    new_user = User(username=data['username'], email=data['email'], password=hashed_password)
     try:
-        data = request.json
-        if User.query.filter_by(email=data['email']).first() or User.query.filter_by(username=data['username']).first():
-            return jsonify({"message": "User already exists"}), 400
-        hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
-        new_user = User(username=data['username'], email=data['email'], password=hashed_password)
         db.session.add(new_user)
         db.session.commit()
-        return jsonify({"message": "User created!"}), 201
-    except Exception as e:
-        print("ERROR:", e) # Print error to Render logs
-        return jsonify({"message": "Server Error", "error": str(e)}), 500
+        return jsonify({"message": "User created successfully"}), 201
+    except:
+        return jsonify({"message": "User already exists"}), 400
 
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
     user = User.query.filter_by(email=data['email']).first()
     if user and check_password_hash(user.password, data['password']):
-        return jsonify({"message": "Success", "user_id": user.id, "username": user.username, "profile_pic": user.profile_pic}), 200
+        return jsonify({"message": "Login successful", "user_id": user.id, "username": user.username}), 200
     return jsonify({"message": "Invalid credentials"}), 401
-
-@app.route('/user_details/<int:user_id>')
-def get_user_details(user_id):
-    user = User.query.get(user_id)
-    if not user: return jsonify({"message": "User not found"}), 404
-    return jsonify({"username": user.username, "email": user.email, "id": user.id, "profile_pic": user.profile_pic}), 200
-
-@app.route('/explore')
-def explore_images():
-    try:
-        query = request.args.get('q')
-        current_user_id = request.args.get('user_id')
-        if query:
-            images = Image.query.filter(Image.title.ilike(f'%{query}%')).all()
-        else:
-            images = Image.query.all()
-            random.shuffle(images)
-        
-        image_list = []
-        for img in images:
-            is_liked = False
-            if current_user_id:
-                is_liked = Like.query.filter_by(user_id=current_user_id, image_id=img.id).first() is not None
-            
-            comments = [{"id": c.id, "text": c.text, "username": c.author.username} for c in img.comments]
-            image_list.append({
-                "id": img.id, "title": img.title, "filename": img.filename,
-                "username": img.uploader.username, "likes_count": len(img.likes),
-                "is_liked": is_liked, "comments": comments
-            })
-        return jsonify(image_list), 200
-    except Exception as e:
-        return jsonify([]), 200
 
 @app.route('/upload', methods=['POST'])
 def upload_image():
+    if 'image' not in request.files: return jsonify({"message": "No file part"}), 400
     file = request.files['image']
-    title = request.form.get('title')
     user_id = request.form.get('user_id')
+    title = request.form.get('title')
+    
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
+        # Save to the new uploads folder
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
         new_image = Image(title=title, filename=filename, user_id=user_id)
         db.session.add(new_image)
         db.session.commit()
-        return jsonify({"message": "Uploaded"}), 201
-    return jsonify({"message": "Error"}), 400
+        return jsonify({"message": "Image uploaded successfully"}), 201
+    return jsonify({"message": "Invalid file type"}), 400
 
-@app.route('/my_images/<int:user_id>')
-def get_user_images(user_id):
-    images = Image.query.filter_by(user_id=user_id).all()
-    image_list = [{"id": img.id, "title": img.title, "filename": img.filename} for img in images]
-    return jsonify(image_list), 200
-
-@app.route('/delete/<int:image_id>', methods=['DELETE'])
-def delete_image(image_id):
-    image = Image.query.get(image_id)
-    if image:
-        try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'], image.filename))
-        except: pass
-        db.session.delete(image)
-        db.session.commit()
-        return jsonify({"message": "Deleted"}), 200
-    return jsonify({"message": "Error"}), 404
+@app.route('/images', methods=['GET'])
+def get_images():
+    images = Image.query.all()
+    output = []
+    for image in images:
+        output.append({
+            "id": image.id,
+            "title": image.title,
+            "filename": image.filename,
+            "uploader": image.uploader.username
+        })
+    return jsonify(output)
 
 @app.route('/profile/<username>')
 def get_public_profile(username):
@@ -164,22 +119,25 @@ def get_public_profile(username):
     image_list = [{"id": i.id, "title": i.title, "filename": i.filename} for i in images]
     return jsonify({"username": user.username, "images": image_list, "profile_pic": user.profile_pic}), 200
 
-@app.route('/static/uploads/<filename>')
+# --- SERVING FILES ---
+
+@app.route('/uploads/<filename>')
 def uploaded_file(filename):
+    # Serve images from the 'uploads' folder
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# 3. CATCH-ALL ROUTE (LAST)
+@app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
-def catch_all(path):
+def serve(path):
+    # Serve static files (like CSS/JS) if they exist in build
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    # Otherwise, serve index.html (React handles the routing)
     return render_template('index.html')
 
-# --- DB Creation (Robust) ---
+# --- INITIALIZATION ---
 with app.app_context():
-    try:
-        db.create_all()
-        print("Database created successfully!")
-    except Exception as e:
-        print("Error creating database:", e)
+    db.create_all()
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -3,6 +3,10 @@ services:
     name: art-haven
     env: python
     plan: free
-    buildCommand: |
-      pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    # CHANGE 1: Run our new shell script
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn app:app"
+    envVars:
+      - key: PYTHON_VERSION
+        # CHANGE 2: Use stable Python 3.11 (3.14 is not supported on Render yet)
+        value: 3.11.0
