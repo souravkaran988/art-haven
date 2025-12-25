@@ -223,13 +223,17 @@ def get_public_profile(username):
     image_list = [{"id": i.id, "title": i.title, "filename": i.filename} for i in images]
     return jsonify({"username": user.username, "images": image_list, "profile_pic": user.profile_pic}), 200
 
+# ... (all your routes above) ...
+
 @app.route('/static/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# Create tables automatically when the app loads
+# --- CRITICAL FIX START ---
+# Move this OUT of the 'if' block so it runs on Render
 with app.app_context():
     db.create_all()
+# --- CRITICAL FIX END ---
 
 if __name__ == '__main__':
     app.run(debug=True)
