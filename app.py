@@ -1,4 +1,3 @@
-# Add 'render_template' to the list
 from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
@@ -6,7 +5,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import os
 import random
-from datetime import datetime # NEW: To timestamp comments
+from datetime import datetime
 
 app = Flask(__name__, static_folder='build/static', template_folder='build')
 CORS(app)
@@ -30,7 +29,7 @@ class User(db.Model):
     profile_pic = db.Column(db.String(150), nullable=True)
     images = db.relationship('Image', backref='uploader', lazy=True)
     likes = db.relationship('Like', backref='user', lazy=True)
-    comments = db.relationship('Comment', backref='author', lazy=True) # NEW
+    comments = db.relationship('Comment', backref='author', lazy=True)
 
 class Image(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -38,14 +37,13 @@ class Image(db.Model):
     filename = db.Column(db.String(100), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     likes = db.relationship('Like', backref='image', lazy=True)
-    comments = db.relationship('Comment', backref='art', lazy=True) # NEW
+    comments = db.relationship('Comment', backref='art', lazy=True)
 
 class Like(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     image_id = db.Column(db.Integer, db.ForeignKey('image.id'), nullable=False)
 
-# NEW: Comment Table
 class Comment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     text = db.Column(db.String(500), nullable=False)
@@ -55,17 +53,12 @@ class Comment(db.Model):
 
 # --- Routes ---
 
-
-# SERVE REACT FRONTEND
+# 1. ROOT ROUTE (Homepage)
 @app.route('/')
 def serve():
     return render_template('index.html')
 
-@app.route('/<path:path>')
-def catch_all(path):
-    return render_template('index.html')
-
-
+# 2. API ROUTES (Must come BEFORE catch_all)
 @app.route('/signup', methods=['POST'])
 def signup():
     data = request.json
@@ -91,15 +84,12 @@ def get_user_details(user_id):
     if not user: return jsonify({"message": "User not found"}), 404
     return jsonify({"username": user.username, "email": user.email, "id": user.id, "profile_pic": user.profile_pic}), 200
 
-# NEW: Add Comment Route
 @app.route('/comment/<int:image_id>', methods=['POST'])
 def add_comment(image_id):
     data = request.json
     new_comment = Comment(text=data['text'], user_id=data['user_id'], image_id=image_id)
     db.session.add(new_comment)
     db.session.commit()
-    
-    # Return the new comment so Frontend can show it immediately
     return jsonify({
         "id": new_comment.id,
         "text": new_comment.text,
@@ -122,7 +112,6 @@ def toggle_like(image_id):
         db.session.commit()
         return jsonify({"message": "Liked", "status": "liked"}), 200
 
-# UPDATED: Explore now includes comments
 @app.route('/explore')
 def explore_images():
     query = request.args.get('q')
@@ -140,7 +129,6 @@ def explore_images():
         if current_user_id:
             is_liked = Like.query.filter_by(user_id=current_user_id, image_id=img.id).first() is not None
         
-        # Pack comments
         comments = []
         for c in img.comments:
             comments.append({
@@ -157,7 +145,7 @@ def explore_images():
             "username": img.uploader.username,
             "likes_count": len(img.likes),
             "is_liked": is_liked,
-            "comments": comments # Send comments to frontend
+            "comments": comments 
         })
     return jsonify(image_list), 200
 
@@ -223,17 +211,19 @@ def get_public_profile(username):
     image_list = [{"id": i.id, "title": i.title, "filename": i.filename} for i in images]
     return jsonify({"username": user.username, "images": image_list, "profile_pic": user.profile_pic}), 200
 
-# ... (all your routes above) ...
-
 @app.route('/static/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# --- CRITICAL FIX START ---
-# Move this OUT of the 'if' block so it runs on Render
+# 3. CATCH-ALL ROUTE (MUST BE LAST!!)
+# This catches everything that is NOT one of the routes above.
+@app.route('/<path:path>')
+def catch_all(path):
+    return render_template('index.html')
+
+# --- DB Creation & Run ---
 with app.app_context():
     db.create_all()
-# --- CRITICAL FIX END ---
 
 if __name__ == '__main__':
     app.run(debug=True)
