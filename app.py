@@ -227,6 +227,9 @@ def get_public_profile(username):
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+# Create tables automatically when the app loads
+with app.app_context():
+    db.create_all()
+
 if __name__ == '__main__':
-    with app.app_context(): db.create_all()
     app.run(debug=True)
